@@ -304,11 +304,14 @@ else:
     st.sidebar.error("⚠️ 网络连接超时，请刷新重试")
     st.stop()
 
-# 单位归一化换算为十亿美元 ($B)
-df['WALCL_B'] = df['WALCL'] / 1000 if df['WALCL'].max() > 10000 else df['WALCL']
-df['TGA_B'] = df['WTREGEN'] / 1000 if df['WTREGEN'].max() > 10000 else df['WTREGEN']
-df['RRP_B'] = df['RRPONTSYD'] if df['RRPONTSYD'].max() < 10000 else df['RRPONTSYD'] / 1000
-df['Reserves_B'] = df['TOTRESNS'] / 1000 if df['TOTRESNS'].max() > 10000 else df['TOTRESNS']
+# ==========================================
+# 4. 严谨确定性单位换算（统一基准为十亿美元 $B）
+# FRED 官方规范：WALCL(百万), WTREGEN(百万), RRPONTSYD(十亿), TOTRESNS(十亿), SWPT(百万)
+# ==========================================
+df['WALCL_B'] = df['WALCL'] / 1000.0
+df['TGA_B'] = df['WTREGEN'] / 1000.0
+df['RRP_B'] = df['RRPONTSYD']
+df['Reserves_B'] = df['TOTRESNS']
 df['SWPT_M'] = df['SWPT']  
 
 df['Net_Liquidity_B'] = df['WALCL_B'] - df['TGA_B'] - df['RRP_B']
@@ -337,13 +340,13 @@ nfci_val = latest['NFCI']
 anfci_val = latest['ANFCI']
 
 # ==========================================
-# 4. 周环比变动（Delta）精准化计算（转换为百万美元 $M 与基点 bps）
+# 核心改变：全量变动（Delta）统一采用十亿美元 ($B)，保留 2 位小数
 # ==========================================
-net_liq_diff_m = (latest['Net_Liquidity_B'] - prev_week['Net_Liquidity_B']) * 1000
-walcl_diff_m = (latest['WALCL_B'] - prev_week['WALCL_B']) * 1000
-res_diff_m = (latest['Reserves_B'] - prev_week['Reserves_B']) * 1000
-rrp_diff_m = (latest['RRP_B'] - prev_week['RRP_B']) * 1000
-tga_diff_m = (latest['TGA_B'] - prev_week['TGA_B']) * 1000
+net_liq_diff_b = latest['Net_Liquidity_B'] - prev_week['Net_Liquidity_B']
+walcl_diff_b = latest['WALCL_B'] - prev_week['WALCL_B']
+res_diff_b = latest['Reserves_B'] - prev_week['Reserves_B']
+rrp_diff_b = latest['RRP_B'] - prev_week['RRP_B']
+tga_diff_b = latest['TGA_B'] - prev_week['TGA_B']
 
 sofr_diff_bps = (latest['SOFR'] - prev_week['SOFR']) * 100
 iorb_diff_bps = (latest['IORB'] - prev_week['IORB']) * 100
@@ -396,7 +399,7 @@ st.markdown(f'''
     <div>
         <div class="insight-row">
             {tag_1}
-            <span class="insight-text"><b>【第一部分：美联储资产负债表】</b> 净流动性 <b>${latest['Net_Liquidity_B']:.1f} B</b>（和上周比 {net_liq_diff_m:+.0f} M），ON RRP 余额 <b>${rrp_val:.2f} B</b>，准备金 <b>${res_val:.1f} B</b></span>
+            <span class="insight-text"><b>【第一部分：美联储资产负债表】</b> 净流动性 <b>${latest['Net_Liquidity_B']:.1f} B</b>（和上周比 {net_liq_diff_b:+.2f} B），ON RRP 余额 <b>${rrp_val:.2f} B</b>，准备金 <b>${res_val:.1f} B</b></span>
         </div>
         <div class="insight-row">
             {tag_2}
@@ -424,7 +427,7 @@ core_judgment = "境内流动性维持全面宽松与低摩擦（水库、金融
 st.info(f"**🎯 核心研判：** {core_judgment}")
 
 st.markdown(f"""
-* **资产负债表维度**：净流动性报 **${latest['Net_Liquidity_B']:.1f} B**（环比变动 {net_liq_diff_m:+.0f} M），总量整体维持宽松。
+* **资产负债表维度**：净流动性报 **${latest['Net_Liquidity_B']:.1f} B**（环比变动 {net_liq_diff_b:+.2f} B），总量整体维持宽松。
 * **金融条件维度**：标准 NFCI 报 **{nfci_val:+.2f}**，广义金融压强维持宽松区间。
 * **在岸价格维度**：SOFR 与 IORB 利差报 **{spread_val:+.1f} bps**（环比变动 {spread_diff:+.2f} bps），回购市场资金摩擦极低。
 * **离岸价格维度**：EUR 基差 **{basis_eur:.1f} bps**、JPY 基差 **{basis_jpy:.1f} bps** 偏紧，离岸美元存在潜在结构性紧缩压强。
@@ -465,11 +468,11 @@ st.markdown(f'''
 v1, v2, v3, v4, v5, v6 = st.columns(6)
 
 v1.metric("总量状态", status_1_str, "基准: 净流动性月度趋势", help="📌 **是什么**：汇总美联储资产负债表净流向。\n\n🎯 **怎么看**：一秒判断央行是在向体系‘放水’还是‘抽水’。")
-v2.metric("美联储净流动性", f"${latest['Net_Liquidity_B']:.1f} B", f"{net_liq_diff_m:+.0f} M (和上周比)", help="📌 **是什么**：注入金融市场的真正‘有效活水’。\n\n🎯 **怎么看**：与标普500/美股估值极强正相关，是风险资产大锚。")
-v3.metric("美联储总资产", f"${latest['WALCL_B']:.1f} B", f"{walcl_diff_m:+.0f} M (和上周比)", help="📌 **是什么**：美联储扩表/缩表的总阀门。\n\n🎯 **怎么看**：反映央行货币政策大周期（QE扩表放水 vs QT缩表抽水）。")
-v4.metric("商业银行准备金", f"${latest['Reserves_B']:.1f} B", f"{res_diff_m:+.0f} M (和上周比)", help="📌 **是什么**：商业银行做市与信贷扩张的储备金。\n\n🎯 **怎么看**：准备金低于临界线（如<3万亿）易引发在岸隔夜资金打架。")
-v5.metric("ON RRP 逆回购", f"${latest['RRP_B']:.2f} B", f"{rrp_diff_m:+.0f} M (和上周比)", delta_color="inverse", help="📌 **是什么**：货币基金闲置资金的‘停泊池’。\n\n🎯 **怎么看**：RRP下降释放资金可抵消缩表；若耗尽将直接消耗准备金。")
-v6.metric("TGA 财政部账户", f"${latest['TGA_B']:.1f} B", f"{tga_diff_m:+.0f} M (和上周比)", delta_color="inverse", help="📌 **是什么**：美国财政部在美联储的活期账户。\n\n🎯 **怎么看**：财政发债/税收（TGA增加）抽水，财政发钱支出（TGA下降）放水。")
+v2.metric("美联储净流动性", f"${latest['Net_Liquidity_B']:.1f} B", f"{net_liq_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：注入金融市场的真正‘有效活水’。\n\n🎯 **怎么看**：与标普500/美股估值极强正相关，是风险资产大锚。")
+v3.metric("美联储总资产", f"${latest['WALCL_B']:.1f} B", f"{walcl_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：美联储扩表/缩表的总阀门。\n\n🎯 **怎么看**：反映央行货币政策大周期（QE扩表放水 vs QT缩表抽水）。")
+v4.metric("商业银行准备金", f"${latest['Reserves_B']:.1f} B", f"{res_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：商业银行做市与信贷扩张的储备金。\n\n🎯 **怎么看**：准备金低于临界线（如<3万亿）易引发在岸隔夜资金打架。")
+v5.metric("ON RRP 逆回购", f"${latest['RRP_B']:.2f} B", f"{rrp_diff_b:+.2f} B (和上周比)", delta_color="inverse", help="📌 **是什么**：货币基金闲置资金的‘停泊池’。\n\n🎯 **怎么看**：RRP下降释放资金可抵消缩表；若耗尽将直接消耗准备金。")
+v6.metric("TGA 财政部账户", f"${latest['TGA_B']:.1f} B", f"{tga_diff_b:+.2f} B (和上周比)", delta_color="inverse", help="📌 **是什么**：美国财政部在美联储的活期账户。\n\n🎯 **怎么看**：财政发债/税收（TGA增加）抽水，财政发钱支出（TGA下降）放水。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
@@ -592,8 +595,8 @@ p1, p2, p3, p4 = st.columns(4)
 
 p1.metric("在岸融资压力状态", status_3_str, "预警线: +5.0 bps", help="📌 **是什么**：美国本土银行间隔夜借贷摩擦状态。\n\n🎯 **怎么看**：预警在岸资金链紧张，防止2019年流动性骤紧重演。")
 p2.metric("SOFR - IORB 利差", f"{spread_val:+.1f} bps", f"{spread_diff:+.2f} bps (和上周比)", delta_color="inverse", help="📌 **是什么**：担保借贷成本与准备金收益的差值。\n\n🎯 **怎么看**：利差升至正值（>0）表明机构不惜溢价借钱，市场极度缺资金。")
-p3.metric("SOFR 隔夜担保融资利率", f"{latest['SOFR']:.2f}%", f"{sofr_diff_bps:+.1f} bps (和上周比)", help="📌 **是什么**：全美最核心的短端国债质押融资基准利率。\n\n🎯 **怎么看**：测量回购市场实际资金水温，替代了历史上的 LIBOR。")
-p4.metric("EFFR 联邦基金有效利率", f"{latest['EFFR']:.2f}%", f"{effr_diff_bps:+.1f} bps (和上周比)", help="📌 **是什么**：美联储政策利率的目标核心中枢。\n\n🎯 **怎么看**：观察其与市场回购利率的偏离与走廊边界。")
+p3.metric("SOFR 隔夜担保融资利率", f"{latest['SOFR']:.2f}%", f"{sofr_diff_bps:+.2f} bps (和上周比)", help="📌 **是什么**：全美最核心的短端国债质押融资基准利率。\n\n🎯 **怎么看**：测量回购市场实际资金水温，替代了历史上的 LIBOR。")
+p4.metric("EFFR 联邦基金有效利率", f"{latest['EFFR']:.2f}%", f"{effr_diff_bps:+.2f} bps (和上周比)", help="📌 **是什么**：美联储政策利率的目标核心中枢。\n\n🎯 **怎么看**：观察其与市场回购利率的偏离与走廊边界。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
