@@ -271,16 +271,19 @@ series_mapping = {
     'ANFCI': 'ANFCI'
 }
 
+raw_series_dict = {}
 fetched_list = []
 with st.spinner("⚡ 正在安全直连美联储官方数据库拉取最新金融数据..."):
     for col_name, s_id in series_mapping.items():
         s_df = fetch_fred_direct(s_id, start_date)
         if s_df is not None:
+            raw_series_dict[col_name] = s_df[col_name].dropna()
             s_df.columns = [col_name]
             fetched_list.append(s_df)
     
     iorb_df = fetch_iorb_combined(start_date)
     if iorb_df is not None:
+        raw_series_dict['IORB'] = iorb_df['IORB'].dropna()
         fetched_list.append(iorb_df)
 
 if len(fetched_list) >= 5:
@@ -317,49 +320,66 @@ df['SWPT_M'] = df['SWPT']
 df['Net_Liquidity_B'] = df['WALCL_B'] - df['TGA_B'] - df['RRP_B']
 df['SOFR_IORB_Spread'] = (df['SOFR'] - df['IORB']) * 100  
 
-latest = df.iloc[-1]
-latest_date = df.index[-1]
+# ==========================================
+# 💡 核心算法：针对单个指标自身“真实有数据的那天”计算周环比
+# ==========================================
+def calc_weekly_change(series):
+    """
+    寻找该指标最新一个真实有数据的日期，并对比约 7 天前（上周同一有数据日）的数值。
+    彻底解决 ffill 带来的 0 变动假象。
+    """
+    s_clean = series.dropna()
+    if len(s_clean) == 0:
+        return 0.0, 0.0
+    if len(s_clean) == 1:
+        return s_clean.iloc[-1], 0.0
+    
+    latest_val = s_clean.iloc[-1]
+    latest_dt = s_clean.index[-1]
+    
+    target_dt = latest_dt - datetime.timedelta(days=7)
+    past_s = s_clean[s_clean.index <= target_dt]
+    
+    if not past_s.empty:
+        prev_val = past_s.iloc[-1]
+    else:
+        prev_val = s_clean.iloc[0]
+        
+    return latest_val, (latest_val - prev_val)
 
-target_prev_date = latest_date - datetime.timedelta(days=7)
-prev_df = df[df.index <= target_prev_date]
-prev_week = prev_df.iloc[-1] if not prev_df.empty else df.iloc[0]
+# 各指标精准周变动计算
+net_liq_val, net_liq_diff_b = calc_weekly_change(df['Net_Liquidity_B'])
+walcl_val, walcl_diff_b = calc_weekly_change(df['WALCL_B'])
+tga_val, tga_diff_b = calc_weekly_change(df['TGA_B'])
+rrp_val, rrp_diff_b = calc_weekly_change(df['RRP_B'])
+res_val, res_diff_b = calc_weekly_change(df['Reserves_B'])
 
-month_ago_df = df[df.index <= (latest_date - datetime.timedelta(days=30))]
+nfci_val, nfci_diff = calc_weekly_change(df['NFCI'])
+anfci_val, anfci_diff = calc_weekly_change(df['ANFCI'])
+
+sofr_val, sofr_diff_val = calc_weekly_change(df['SOFR'])
+sofr_diff_bps = sofr_diff_val * 100
+
+iorb_val, iorb_diff_val = calc_weekly_change(df['IORB'])
+iorb_diff_bps = iorb_diff_val * 100
+
+effr_val, effr_diff_val = calc_weekly_change(df['EFFR'])
+effr_diff_bps = effr_diff_val * 100
+
+spread_val, spread_diff = calc_weekly_change(df['SOFR_IORB_Spread'])
+
+basis_eur, basis_eur_diff = calc_weekly_change(df['EURUSD_Basis'])
+basis_jpy, basis_jpy_diff = calc_weekly_change(df['USDJPY_Basis'])
+swpt_val, swpt_diff = calc_weekly_change(df['SWPT_M'])
+dxy_val, dxy_diff = calc_weekly_change(df['DXY'])
+vix_val, vix_diff = calc_weekly_change(df['VIX'])
+
+latest_date_str = df.index[-1].strftime('%Y-%m-%d')
+
+# 1个月前的净流动性变化
+month_ago_df = df[df.index <= (df.index[-1] - datetime.timedelta(days=30))]
 net_liq_1m_ago = month_ago_df.iloc[-1]['Net_Liquidity_B'] if not month_ago_df.empty else df.iloc[0]['Net_Liquidity_B']
-net_liq_1m_change = latest['Net_Liquidity_B'] - net_liq_1m_ago
-
-latest_date_str = latest_date.strftime('%Y-%m-%d')
-
-rrp_val = latest['RRP_B']
-res_val = latest['Reserves_B']
-spread_val = latest['SOFR_IORB_Spread']
-swpt_val = latest['SWPT_M']
-basis_eur = latest['EURUSD_Basis']
-basis_jpy = latest['USDJPY_Basis']
-nfci_val = latest['NFCI']
-anfci_val = latest['ANFCI']
-
-# ==========================================
-# 核心改变：全量变动（Delta）统一采用十亿美元 ($B)，保留 2 位小数
-# ==========================================
-net_liq_diff_b = latest['Net_Liquidity_B'] - prev_week['Net_Liquidity_B']
-walcl_diff_b = latest['WALCL_B'] - prev_week['WALCL_B']
-res_diff_b = latest['Reserves_B'] - prev_week['Reserves_B']
-rrp_diff_b = latest['RRP_B'] - prev_week['RRP_B']
-tga_diff_b = latest['TGA_B'] - prev_week['TGA_B']
-
-sofr_diff_bps = (latest['SOFR'] - prev_week['SOFR']) * 100
-iorb_diff_bps = (latest['IORB'] - prev_week['IORB']) * 100
-effr_diff_bps = (latest['EFFR'] - prev_week['EFFR']) * 100
-spread_diff = spread_val - (prev_week['SOFR'] - prev_week['IORB']) * 100
-
-basis_eur_diff = basis_eur - prev_week['EURUSD_Basis']
-basis_jpy_diff = basis_jpy - prev_week['USDJPY_Basis']
-swpt_diff = swpt_val - prev_week['SWPT_M']
-dxy_diff = latest['DXY'] - prev_week['DXY']
-vix_diff = latest['VIX'] - prev_week['VIX']
-nfci_diff = nfci_val - prev_week['NFCI']
-anfci_diff = anfci_val - prev_week['ANFCI']
+net_liq_1m_change = net_liq_val - net_liq_1m_ago
 
 # 四大部分诊断标签判定
 is_net_liq_easing = net_liq_1m_change >= 0
@@ -374,7 +394,7 @@ is_spread_easing = spread_val <= 0
 status_3_str = '宽松' if is_spread_easing else '紧缩'
 tag_3 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_3_str}</span>' if is_spread_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_3_str}</span>'
 
-is_offshore_easing = (basis_eur > -30 and swpt_val == 0 and latest['VIX'] < 20)
+is_offshore_easing = (basis_eur > -30 and swpt_val == 0 and vix_val < 20)
 status_4_str = '宽松' if is_offshore_easing else '紧缩'
 tag_4 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_4_str}</span>' if is_offshore_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_4_str}</span>'
 
@@ -399,19 +419,19 @@ st.markdown(f'''
     <div>
         <div class="insight-row">
             {tag_1}
-            <span class="insight-text"><b>【第一部分：美联储资产负债表】</b> 净流动性 <b>${latest['Net_Liquidity_B']:.1f} B</b>（和上周比 {net_liq_diff_b:+.2f} B），ON RRP 余额 <b>${rrp_val:.2f} B</b>，准备金 <b>${res_val:.1f} B</b></span>
+            <span class="insight-text"><b>【第一部分：美联储资产负债表】</b> 净流动性 <b>${net_liq_val:.1f} B</b>（和上周有数据日比 {net_liq_diff_b:+.2f} B），ON RRP 余额 <b>${rrp_val:.2f} B</b>，准备金 <b>${res_val:.1f} B</b></span>
         </div>
         <div class="insight-row">
             {tag_2}
-            <span class="insight-text"><b>【第二部分：芝加哥联储金融条件】</b> 标准NFCI <b>{nfci_val:+.2f}</b> ｜ 修正ANFCI <b>{anfci_val:+.2f}</b>（和上周比 {nfci_diff:+.2f}）</span>
+            <span class="insight-text"><b>【第二部分：芝加哥联储金融条件】</b> 标准NFCI <b>{nfci_val:+.2f}</b> ｜ 修正ANFCI <b>{anfci_val:+.2f}</b>（和上周有数据日比 {nfci_diff:+.2f}）</span>
         </div>
         <div class="insight-row">
             {tag_3}
-            <span class="insight-text"><b>【第三部分：在岸资金价格】</b> SOFR 利率 <b>{latest['SOFR']:.2f}%</b>，IORB 利率 <b>{latest['IORB']:.2f}%</b>，融资利差 <b>{spread_val:+.1f} bps</b>（和上周比 {spread_diff:+.2f} bps）</span>
+            <span class="insight-text"><b>【第三部分：在岸资金价格】</b> SOFR 利率 <b>{sofr_val:.2f}%</b>，IORB 利率 <b>{iorb_val:.2f}%</b>，融资利差 <b>{spread_val:+.1f} bps</b>（和上周有数据日比 {spread_diff:+.2f} bps）</span>
         </div>
         <div class="insight-row">
             {tag_4}
-            <span class="insight-text"><b>【第四部分：离岸资金价格】</b> EUR基差 <b>{basis_eur:.1f} bps</b>，JPY基差 <b>{basis_jpy:.1f} bps</b>，央行互换 <b>{swpt_str_disp}</b>，DXY <b>{latest['DXY']:.2f}</b>，VIX <b>{latest['VIX']:.2f}</b></span>
+            <span class="insight-text"><b>【第四部分：离岸资金价格】</b> EUR基差 <b>{basis_eur:.2f} bps</b>（和上周有数据日比 {basis_eur_diff:+.2f} bps），JPY基差 <b>{basis_jpy:.2f} bps</b>，央行互换 <b>{swpt_str_disp}</b>，DXY <b>{dxy_val:.2f}</b>，VIX <b>{vix_val:.2f}</b></span>
         </div>
     </div>
 </div>
@@ -427,10 +447,10 @@ core_judgment = "境内流动性维持全面宽松与低摩擦（水库、金融
 st.info(f"**🎯 核心研判：** {core_judgment}")
 
 st.markdown(f"""
-* **资产负债表维度**：净流动性报 **${latest['Net_Liquidity_B']:.1f} B**（环比变动 {net_liq_diff_b:+.2f} B），总量整体维持宽松。
+* **资产负债表维度**：净流动性报 **${net_liq_val:.1f} B**（环比同发布日变动 {net_liq_diff_b:+.2f} B），总量整体维持宽松。
 * **金融条件维度**：标准 NFCI 报 **{nfci_val:+.2f}**，广义金融压强维持宽松区间。
-* **在岸价格维度**：SOFR 与 IORB 利差报 **{spread_val:+.1f} bps**（环比变动 {spread_diff:+.2f} bps），回购市场资金摩擦极低。
-* **离岸价格维度**：EUR 基差 **{basis_eur:.1f} bps**、JPY 基差 **{basis_jpy:.1f} bps** 偏紧，离岸美元存在潜在结构性紧缩压强。
+* **在岸价格维度**：SOFR 与 IORB 利差报 **{spread_val:+.1f} bps**（环比同交易日变动 {spread_diff:+.2f} bps），回购市场资金摩擦极低。
+* **离岸价格维度**：EUR 基差 **{basis_eur:.2f} bps**（环比变动 {basis_eur_diff:+.2f} bps）、JPY 基差 **{basis_jpy:.2f} bps**，离岸美元存在潜在结构性紧缩压强。
 """)
 
 st.warning("💡 **动态提示：** 需密切关注美国财政部发债对 TGA 账户的抽水效应、美联储缩表（QT）对准备金的边际侵蚀，以及海外套息交易波动引发的离岸基差跳水风险。")
@@ -468,11 +488,11 @@ st.markdown(f'''
 v1, v2, v3, v4, v5, v6 = st.columns(6)
 
 v1.metric("总量状态", status_1_str, "基准: 净流动性月度趋势", help="📌 **是什么**：汇总美联储资产负债表净流向。\n\n🎯 **怎么看**：一秒判断央行是在向体系‘放水’还是‘抽水’。")
-v2.metric("美联储净流动性", f"${latest['Net_Liquidity_B']:.1f} B", f"{net_liq_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：注入金融市场的真正‘有效活水’。\n\n🎯 **怎么看**：与标普500/美股估值极强正相关，是风险资产大锚。")
-v3.metric("美联储总资产", f"${latest['WALCL_B']:.1f} B", f"{walcl_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：美联储扩表/缩表的总阀门。\n\n🎯 **怎么看**：反映央行货币政策大周期（QE扩表放水 vs QT缩表抽水）。")
-v4.metric("商业银行准备金", f"${latest['Reserves_B']:.1f} B", f"{res_diff_b:+.2f} B (和上周比)", help="📌 **是什么**：商业银行做市与信贷扩张的储备金。\n\n🎯 **怎么看**：准备金低于临界线（如<3万亿）易引发在岸隔夜资金打架。")
-v5.metric("ON RRP 逆回购", f"${latest['RRP_B']:.2f} B", f"{rrp_diff_b:+.2f} B (和上周比)", delta_color="inverse", help="📌 **是什么**：货币基金闲置资金的‘停泊池’。\n\n🎯 **怎么看**：RRP下降释放资金可抵消缩表；若耗尽将直接消耗准备金。")
-v6.metric("TGA 财政部账户", f"${latest['TGA_B']:.1f} B", f"{tga_diff_b:+.2f} B (和上周比)", delta_color="inverse", help="📌 **是什么**：美国财政部在美联储的活期账户。\n\n🎯 **怎么看**：财政发债/税收（TGA增加）抽水，财政发钱支出（TGA下降）放水。")
+v2.metric("美联储净流动性", f"${net_liq_val:.1f} B", f"{net_liq_diff_b:+.2f} B (较上周有数据日)", help="📌 **是什么**：注入金融市场的真正‘有效活水’。\n\n🎯 **怎么看**：与标普500/美股估值极强正相关，是风险资产大锚。")
+v3.metric("美联储总资产", f"${walcl_val:.1f} B", f"{walcl_diff_b:+.2f} B (较上周有数据日)", help="📌 **是什么**：美联储扩表/缩表的总阀门。\n\n🎯 **怎么看**：反映央行货币政策大周期（QE扩表放水 vs QT缩表抽水）。")
+v4.metric("商业银行准备金", f"${res_val:.1f} B", f"{res_diff_b:+.2f} B (较上周有数据日)", help="📌 **是什么**：商业银行做市与信贷扩张的储备金。\n\n🎯 **怎么看**：准备金低于临界线（如<3万亿）易引发在岸隔夜资金打架。")
+v5.metric("ON RRP 逆回购", f"${rrp_val:.2f} B", f"{rrp_diff_b:+.2f} B (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：货币基金闲置资金的‘停泊池’。\n\n🎯 **怎么看**：RRP下降释放资金可抵消缩表；若耗尽将直接消耗准备金。")
+v6.metric("TGA 财政部账户", f"${tga_val:.1f} B", f"{tga_diff_b:+.2f} B (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：美国财政部在美联储的活期账户。\n\n🎯 **怎么看**：财政发债/税收（TGA增加）抽水，财政发钱支出（TGA下降）放水。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
@@ -543,8 +563,8 @@ st.markdown(f'''
 f1, f2, f3 = st.columns(3)
 
 f1.metric("金融条件状态", status_2_str, "基准线: 0.00", help="📌 **是什么**：判断全美综合金融压强状态。")
-f2.metric("标准 NFCI 最新值", f"{nfci_val:+.2f}", f"{nfci_diff:+.2f} (和上周比)", delta_color="inverse", help="📌 **是什么**：美联储官方评估广义金融条件的综合指数 (NFCI)。\n\n🎯 **怎么看**：数值 < 0 代表宽松；数值 > 0 代表紧缩。")
-f3.metric("修正 ANFCI 最新值", f"{anfci_val:+.2f}", f"{anfci_diff:+.2f} (和上周比)", delta_color="inverse", help="📌 **是什么**：芝加哥联储剔除宏观经济与通胀干扰后的‘修正金融条件指数’ (ANFCI)。\n\n🎯 **怎么看**：纯粹剥离经济基本面影响，评估金融体系自身的独立压强。")
+f2.metric("标准 NFCI 最新值", f"{nfci_val:+.2f}", f"{nfci_diff:+.2f} (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：美联储官方评估广义金融条件的综合指数 (NFCI)。\n\n🎯 **怎么看**：数值 < 0 代表宽松；数值 > 0 代表紧缩。")
+f3.metric("修正 ANFCI 最新值", f"{anfci_val:+.2f}", f"{anfci_diff:+.2f} (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：芝加哥联储剔除宏观经济与通胀干扰后的‘修正金融条件指数’ (ANFCI)。\n\n🎯 **怎么看**：纯粹剥离经济基本面影响，评估金融体系自身的独立压强。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
@@ -594,9 +614,9 @@ st.markdown(f'''
 p1, p2, p3, p4 = st.columns(4)
 
 p1.metric("在岸融资压力状态", status_3_str, "预警线: +5.0 bps", help="📌 **是什么**：美国本土银行间隔夜借贷摩擦状态。\n\n🎯 **怎么看**：预警在岸资金链紧张，防止2019年流动性骤紧重演。")
-p2.metric("SOFR - IORB 利差", f"{spread_val:+.1f} bps", f"{spread_diff:+.2f} bps (和上周比)", delta_color="inverse", help="📌 **是什么**：担保借贷成本与准备金收益的差值。\n\n🎯 **怎么看**：利差升至正值（>0）表明机构不惜溢价借钱，市场极度缺资金。")
-p3.metric("SOFR 隔夜担保融资利率", f"{latest['SOFR']:.2f}%", f"{sofr_diff_bps:+.2f} bps (和上周比)", help="📌 **是什么**：全美最核心的短端国债质押融资基准利率。\n\n🎯 **怎么看**：测量回购市场实际资金水温，替代了历史上的 LIBOR。")
-p4.metric("EFFR 联邦基金有效利率", f"{latest['EFFR']:.2f}%", f"{effr_diff_bps:+.2f} bps (和上周比)", help="📌 **是什么**：美联储政策利率的目标核心中枢。\n\n🎯 **怎么看**：观察其与市场回购利率的偏离与走廊边界。")
+p2.metric("SOFR - IORB 利差", f"{spread_val:+.1f} bps", f"{spread_diff:+.2f} bps (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：担保借贷成本与准备金收益的差值。\n\n🎯 **怎么看**：利差升至正值（>0）表明机构不惜溢价借钱，市场极度缺资金。")
+p3.metric("SOFR 隔夜担保融资利率", f"{sofr_val:.2f}%", f"{sofr_diff_bps:+.2f} bps (较上周有数据日)", help="📌 **是什么**：全美最核心的短端国债质押融资基准利率。\n\n🎯 **怎么看**：测量回购市场实际资金水温，替代了历史上的 LIBOR。")
+p4.metric("EFFR 联邦基金有效利率", f"{effr_val:.2f}%", f"{effr_diff_bps:+.2f} bps (较上周有数据日)", help="📌 **是什么**：美联储政策利率的目标核心中枢。\n\n🎯 **怎么看**：观察其与市场回购利率的偏离与走廊边界。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
@@ -660,11 +680,11 @@ st.markdown(f'''
 o1, o2, o3, o4, o5, o6 = st.columns(6)
 
 o1.metric("离岸融资压力状态", status_4_str, "预警线: 基差-30 / VIX 20", help="📌 **是什么**：综合评估海外机构获取美元成本。")
-o2.metric("EUR/USD 3M 基差", f"{basis_eur:.1f} bps", f"{basis_eur_diff:+.1f} bps (和上周比)", delta_color="normal" if basis_eur > -30 else "inverse", help="📌 **是什么**：欧洲机构获取美元的掉期额外溢价。\n\n🎯 **怎么看**：基差深度走负（<-30bps）意味着离岸发生美元挤兑。")
-o3.metric("USD/JPY 3M 基差", f"{basis_jpy:.1f} bps", f"{basis_jpy_diff:+.1f} bps (和上周比)", delta_color="normal" if basis_jpy > -30 else "inverse", help="📌 **是什么**：日本机构/套息资金获取美元的掉期溢价。\n\n🎯 **怎么看**：捕捉亚洲区套息交易逆转与日系机构海外对冲压强。")
-o4.metric("央行互换余额 (SWPT)", f"${swpt_val:.0f} M", f"{swpt_diff:+.0f} M (和上周比)", delta_color="inverse", help="📌 **是什么**：美联储向外国央行提供的终极救市通道。\n\n🎯 **怎么看**：常态保持为0；若突然飙升表明发生离岸流动性危机。")
-o5.metric("发达国家美元指数", f"{latest['DXY']:.2f}", f"{dxy_diff:+.2f} (和上周比)", delta_color="inverse", help="📌 **是什么**：美联储官方发达经济体贸易加权美元指数 (DTWEXAFEGS)。\n\n🎯 **怎么看**：衡量美元在全球成熟市场资本流动中的真实购买力。")
-o6.metric("VIX 恐慌指数", f"{latest['VIX']:.2f}", f"{vix_diff:+.2f} (和上周比)", delta_color="inverse", help="📌 **是什么**：美股期权隐含波动率，避险情绪风向标。\n\n🎯 **怎么看**：VIX飙升(>20)引发海外抛资产囤美元，是离岸紧缩先导雷达。")
+o2.metric("EUR/USD 3M 基差", f"{basis_eur:.2f} bps", f"{basis_eur_diff:+.2f} bps (较上周有数据日)", delta_color="normal" if basis_eur > -30 else "inverse", help="📌 **是什么**：欧洲机构获取美元的掉期额外溢价。\n\n🎯 **怎么看**：基差深度走负（<-30bps）意味着离岸发生美元挤兑。")
+o3.metric("USD/JPY 3M 基差", f"{basis_jpy:.2f} bps", f"{basis_jpy_diff:+.2f} bps (较上周有数据日)", delta_color="normal" if basis_jpy > -30 else "inverse", help="📌 **是什么**：日本机构/套息资金获取美元的掉期溢价。\n\n🎯 **怎么看**：捕捉亚洲区套息交易逆转与日系机构海外对冲压强。")
+o4.metric("央行互换余额 (SWPT)", f"${swpt_val:.0f} M", f"{swpt_diff:+.0f} M (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：美联储向外国央行提供的终极救市通道。\n\n🎯 **怎么看**：常态保持为0；若突然飙升表明发生离岸流动性危机。")
+o5.metric("发达国家美元指数", f"{dxy_val:.2f}", f"{dxy_diff:+.2f} (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：美联储官方发达经济体贸易加权美元指数 (DTWEXAFEGS)。\n\n🎯 **怎么看**：衡量美元在全球成熟市场资本流动中的真实购买力。")
+o6.metric("VIX 恐慌指数", f"{vix_val:.2f}", f"{vix_diff:+.2f} (较上周有数据日)", delta_color="inverse", help="📌 **是什么**：美股期权隐含波动率，避险情绪风向标。\n\n🎯 **怎么看**：VIX飙升(>20)引发海外抛资产囤美元，是离岸紧缩先导雷达。")
 
 st.markdown(f'''
 <div class="chart-guide-container">
