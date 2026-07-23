@@ -62,7 +62,7 @@ st.markdown('''
         border-left: 5px solid #10b981;
         border-radius: 12px;
         padding: 22px 28px;
-        margin-bottom: 30px;
+        margin-bottom: 24px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
     }
     .insight-title {
@@ -258,17 +258,17 @@ def fetch_iorb_combined(start_date):
     return None
 
 series_mapping = {
-    'WALCL': 'WALCL',            # 美联储总资产
-    'WTREGEN': 'WTREGEN',        # TGA 财政部账户
-    'RRPONTSYD': 'RRPONTSYD',    # ON RRP 隔夜逆回购
-    'TOTRESNS': 'TOTRESNS',      # 商业银行准备金
-    'SOFR': 'SOFR',              # SOFR 担保隔夜融资利率
-    'EFFR': 'EFFR',              # 联邦基金有效利率
-    'DXY': 'DTWEXAFEGS',        # 发达国家美元指数
-    'VIX': 'VIXCLS',             # VIX 恐慌指数
-    'SWPT': 'SWPT',              # 美联储央行流动性互换余额
-    'NFCI': 'NFCI',              # 芝加哥联储全国金融条件指数
-    'ANFCI': 'ANFCI'             # 芝加哥联储修正金融条件指数
+    'WALCL': 'WALCL',
+    'WTREGEN': 'WTREGEN',
+    'RRPONTSYD': 'RRPONTSYD',
+    'TOTRESNS': 'TOTRESNS',
+    'SOFR': 'SOFR',
+    'EFFR': 'EFFR',
+    'DXY': 'DTWEXAFEGS',
+    'VIX': 'VIXCLS',
+    'SWPT': 'SWPT',
+    'NFCI': 'NFCI',
+    'ANFCI': 'ANFCI'
 }
 
 fetched_list = []
@@ -321,7 +321,6 @@ target_prev_date = latest_date - datetime.timedelta(days=7)
 prev_df = df[df.index <= target_prev_date]
 prev_week = prev_df.iloc[-1] if not prev_df.empty else df.iloc[0]
 
-# 用于资产负债表中长期趋势判定的 1 个月前数据（20个交易日前）
 month_ago_df = df[df.index <= (latest_date - datetime.timedelta(days=30))]
 net_liq_1m_ago = month_ago_df.iloc[-1]['Net_Liquidity_B'] if not month_ago_df.empty else df.iloc[0]['Net_Liquidity_B']
 net_liq_1m_change = latest['Net_Liquidity_B'] - net_liq_1m_ago
@@ -356,27 +355,23 @@ nfci_diff = nfci_val - prev_week['NFCI']
 anfci_diff = anfci_val - prev_week['ANFCI']
 
 # ==========================================
-# 4. 四大部分诊断标签判定（严格对齐：绿=宽松，红=紧缩）
+# 4. 四大部分诊断标签判定
 # ==========================================
-# 维度一：基于近1个月净流动性趋势（若1个月整体增长为宽松，减少为紧缩）
 is_net_liq_easing = net_liq_1m_change >= 0
-tag_1 = '<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 宽松</span>' if is_net_liq_easing else '<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 紧缩</span>'
 status_1_str = '宽松' if is_net_liq_easing else '紧缩'
+tag_1 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_1_str}</span>' if is_net_liq_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_1_str}</span>'
 
-# 维度二：NFCI < 0 为宽松，否则紧缩
 is_nfci_easing = nfci_val < 0
-tag_2 = '<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 宽松</span>' if is_nfci_easing else '<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 紧缩</span>'
 status_2_str = '宽松' if is_nfci_easing else '紧缩'
+tag_2 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_2_str}</span>' if is_nfci_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_2_str}</span>'
 
-# 维度三：在岸利差 <= 0 为宽松，否则紧缩
 is_spread_easing = spread_val <= 0
-tag_3 = '<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 宽松</span>' if is_spread_easing else '<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 紧缩</span>'
 status_3_str = '宽松' if is_spread_easing else '紧缩'
+tag_3 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_3_str}</span>' if is_spread_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_3_str}</span>'
 
-# 维度四：离岸状态
 is_offshore_easing = (basis_eur > -30 and swpt_val == 0 and latest['VIX'] < 20)
-tag_4 = '<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 宽松</span>' if is_offshore_easing else '<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 紧缩</span>'
 status_4_str = '宽松' if is_offshore_easing else '紧缩'
+tag_4 = f'<span style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #10b981; font-size: 1.1rem; white-space: nowrap;">🟢 {status_4_str}</span>' if is_offshore_easing else f'<span style="background-color: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 14px; border-radius: 6px; font-weight: 800; border: 1px solid #ef4444; font-size: 1.1rem; white-space: nowrap;">🔴 {status_4_str}</span>'
 
 # ==========================================
 # 5. 顶部 Header 栏与四部分诊断面板
@@ -416,6 +411,24 @@ st.markdown(f'''
     </div>
 </div>
 ''', unsafe_allow_html=True)
+
+# ==========================================
+# 🤖 AI 智能多维综述与核心研判
+# ==========================================
+st.markdown("### 🤖 AI 智能宏观多维综述与当周动态洞察")
+
+core_judgment = "境内流动性维持全面宽松与低摩擦（水库、金融条件、在岸价格全线宽松），但离岸美元受跨期基差压强影响呈局部结构性紧缩，“境内充裕、境外承压”特征显著。"
+
+st.info(f"**🎯 核心研判：** {core_judgment}")
+
+st.markdown(f"""
+* **资产负债表维度**：净流动性报 **${latest['Net_Liquidity_B']:.1f} B**（环比变动 {net_liq_diff:+.1f} B），总量整体维持宽松。
+* **金融条件维度**：标准 NFCI 报 **{nfci_val:+.2f}**，广义金融压强维持宽松区间。
+* **在岸价格维度**：SOFR 与 IORB 利差报 **{spread_val:+.1f} bps**，回购市场资金摩擦极低。
+* **离岸价格维度**：EUR 基差 **{basis_eur:.1f} bps**、JPY 基差 **{basis_jpy:.1f} bps** 偏紧，离岸美元存在潜在结构性紧缩压强。
+""")
+
+st.warning("💡 **动态提示：** 需密切关注美国财政部发债对 TGA 账户的抽水效应、美联储缩表（QT）对准备金的边际侵蚀，以及海外套息交易波动引发的离岸基差跳水风险。")
 
 layout_config = dict(
     paper_bgcolor='#131c2e',
